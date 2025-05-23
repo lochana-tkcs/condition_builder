@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 import regex as re
-import random
 import json
+from datetime import datetime
+from dateutil import parser, relativedelta
 
 # Set your OpenAI API key
 api_key = st.secrets["openai_api_key"]
@@ -12,7 +13,6 @@ api_key = st.secrets["openai_api_key"]
 client = OpenAI(
     api_key=api_key)
 
-#working p
 condition_schema = {
   "type": "json_schema",
   "json_schema": {
@@ -51,61 +51,157 @@ condition_schema = {
         "condition": {
           "type": "object",
           "description": "A single condition specifying a column and operator.",
-          "properties": {
-            "Column_Name": {
-              "type": "string",
-              "description": "The name of the column to apply the condition to."
+          "anyOf": [
+            {
+              "description": "Condition for Text or Numeric columns",
+              "properties": {
+                "Column_Name": {
+                  "type": "string",
+                  "description": "The name of the column to apply the condition to."
+                },
+                "Column_Type": {
+                  "type": "string",
+                  "enum": ["Text", "Numeric"],
+                  "description": "Specifies the data type of the column: Text or Numeric."
+                },
+                "Column_Operator": {
+                  "type": "string",
+                  "enum": [
+                    "is",
+                    "is NOT",
+                    "is less than",
+                    "is less than or equal to",
+                    "is greater than",
+                    "is greater than or equal to",
+                    "is MAX value",
+                    "is NOT MAX value",
+                    "is MIN value",
+                    "is NOT MIN value",
+                    "is Empty",
+                    "is NOT Empty",
+                    "contains",
+                    "does NOT contain",
+                    "starts with",
+                    "ends with",
+                    "does NOT start with",
+                    "does NOT end with"
+                  ],
+                  "description": """
+                    The operands compatible with Text Columns - is, is NOT, contains, does NOT contain, starts with, ends with, does NOT start with, does NOT end with, is EMPTY, is NOT EMPTY.
+                    The operands compatible with Numerical Columns - is, is NOT, is less than, is less than or equal to, is greater than, is greater than or equal to, is MAX value, is NOT MAX value, is MIN value, is NOT MIN value, is EMPTY, is NOT EMPTY.
+                  """
+                },
+                "Operand_Type": {
+                  "type": "string",
+                  "enum": ["Value", "Column Value"]
+                },
+                "Operand": {
+                  "type": "array",
+                  "description": "The value(s) to compare against.",
+                  "items": {
+                    "anyOf": [
+                      { "type": "string" },
+                      { "type": "number" },
+                      { "type": "boolean" }
+                    ]
+                  }
+                }
+              },
+              "required": ["Column_Name", "Column_Type", "Column_Operator", "Operand_Type", "Operand"],
+              "additionalProperties": False
             },
-            "Column_Type": {
-              "type": "string",
-              "enum": ["Text", "Numeric", "Date/Time"],
-              "description": "It can Date/Time, Numeric or Text. Specifies the data type of the column on which the condition will be applied"
+            {
+              "description": "Condition for Date/Time columns with Date format",
+              "properties": {
+                "Column_Name": {
+                  "type": "string",
+                  "description": "The name of the column to apply the condition to."
+                },
+                "Column_Type": {
+                  "type": "string",
+                  "enum": ["Date/Time"],
+                  "description": "Specifies the data type of the column: Date/Time."
+                },
+                "Column_Operator": {
+                  "type": "string",
+                  "enum": [
+                    "is",
+                    "is NOT",
+                    "is earlier than",
+                    "is on or earlier than",
+                    "is later than",
+                    "is on or later than",
+                    "is Empty",
+                    "is NOT Empty"
+                  ],
+                  "description": "The operands compatible with Date/Time Columns - is, is NOT, is earlier than, is on or earlier than, is later than, is on or later than, is EMPTY, is NOT EMPTY."
+                },
+                "Operand_Type": {
+                  "type": "string",
+                  "enum": ["Value", "Column Value"]
+                },
+                "Date_Format": {
+                  "type": "string",
+                  "enum": ["Date", "Date-Time in seconds", "Date/Minute", "Date/Hour", "Year/Month", "Year", "Day of Month", "Month of Year", "Earliest single value", "Latest single value", "Weekday"],
+                  "description": "Month is used to filter out records in all years"
+                },
+                "Operand": {
+                  "type": "array",
+                  "description": "The value(s) to compare against, must be strings for Date or ISO Date-Time formats.",
+                  "items": { "type": "string" }
+                }
+              },
+              "required": ["Column_Name", "Column_Type", "Column_Operator", "Operand_Type", "Date_Format", "Operand"],
+              "additionalProperties": False
             },
-            "Column_Operator": {
-              "type": "string",
-              "enum": [
-                        "is",
-                        "is NOT",
-                        "is less than",
-                        "is less than or equal to",
-                        "is greater than",
-                        "is greater than or equal to",
-                        "is MAX value",
-                        "is NOT MAX value",
-                        "is MIN value",
-                        "is NOT MIN value",
-                        "is Empty",
-                        "is NOT Empty",
-                        "contains",
-                        "does NOT contain",
-                        "starts with",
-                        "ends with",
-                        "does NOT start with",
-                        "does NOT end with"
-                      ],
-              "description": """
-                              The operands compatible for Text Columns - is, is NOT, contains, does NOT contain, starts with, ends with, does NOT start with, does NOT end with, is EMPTY, is NOT EMPTY.
-                              The operands compatible for Numerical Columns - is, is NOT, is less than, is less than or equal to, is greater than, is greater than or equal to, is MAX value, is NOT MAX value, is MIN value, is NOT MIN value, is EMPTY, is NOT EMPTY.
-                             """
-            },
-            "Operand_Type": {
-                      "type": "string",
-                      "enum": ["Value", "Column Value"]
-                    },
-            "Operand": {
-              "type": "array",
-              "description": "The value(s) to compare against. The list can have more than one item",
-              "items": {
-                "anyOf": [
-                  {"type": "string"},
-                  {"type": "number"},
-                  {"type": "boolean"}
-                ]
-              }
+            {
+              "description": "Condition for Date/Time columns with are x from their earliest or latest date",
+              "properties": {
+                "Column_Name": {
+                  "type": "string",
+                  "description": "The name of the column to apply the condition to."
+                },
+                "Column_Type": {
+                  "type": "string",
+                  "enum": ["Date/Time"],
+                  "description": "Specifies the data type of the column: Date/Time."
+                },
+                "Column_Operator": {
+                  "type": "string",
+                  "enum": [
+                    "is",
+                    "is NOT",
+                    "is earlier than",
+                    "is on or earlier than",
+                    "is later than",
+                    "is on or later than"
+                  ],
+                  "description": "The operands compatible with Date/Time Columns - is, is NOT, is earlier than, is on or earlier than, is later than, is on or later than, is EMPTY, is NOT EMPTY."
+                },
+                "Operand_Type": {
+                  "type": "string",
+                  "enum": ["Value"]
+                },
+                "Date_Format": {
+                  "type": "string",
+                  "enum": ["Earliest single value", "Latest single value", "Current Date (UTC)"],
+                  "description": "The reference point for comparison. Determines whether to calculate the offset from the earliest or latest timestamp in the column."
+                },
+                "Operand": {
+                  "type": "array",
+                  "description": "The offset value(s) to apply to the reference point. For example, 4 means '4 units after the reference date'. Accepts both positive and negative numbers. For example, -3 with unit 'Day' means 3 days before the reference date.",
+                  "items": { "type": "string" }
+                },
+                "Unit": {
+                  "type": "string",
+                  "enum": ["Year", "Month", "Day", "Hour", "Minute", "Second", "Week"],
+                  "description": "The unit of time used to interpret the offset (e.g., '4' with 'Hour' means 4 hours after the reference date)."
+                }
+              },
+              "required": ["Column_Name", "Column_Type", "Column_Operator", "Operand_Type", "Date_Format", "Operand", "Unit"],
+              "additionalProperties": False
             }
-          },
-          "required": ["Column_Name", "Column_Type", "Column_Operator", "Operand_Type", "Operand"],
-          "additionalProperties": False
+          ]
         },
         "condition_group": {
           "type": "object",
@@ -138,87 +234,144 @@ condition_schema = {
 def transform_condition(raw_condition):
     """Transform API response to desired format."""
     operator_map = {
-        "is": "IN_LIST",
-        "is NOT": "NOT_IN_LIST",
-        "is less than": "LT",
-        "is less than or equal to": "LTE",
-        "is greater than": "GT",
-        "is greater than or equal to": "GTE",
-        "is MAX value": "IS_MAXVAL",
-        "is NOT MAX value": "IS_NOT_MAXVAL",
-        "is MIN value": "IS_MINVAL",
-        "is NOT MIN value": "IS_NOT_MINVAL",
-        "is Empty": "IS_EMPTY",
-        "is NOT Empty": "IS_NOT_EMPTY",
-        "contains": "CONTAINS",
-        "does NOT contain": "NOT_CONTAINS",
-        "starts with": "STARTS_WITH",
-        "ends with": "ENDS_WITH",
-        "does NOT start with": "NOT_STARTS_WITH",
-        "does NOT end with": "NOT_ENDS_WITH",
+        "is": "IN_LIST", "is NOT": "NOT_IN_LIST", "is less than": "LT",
+        "is less than or equal to": "LTE", "is greater than": "GT",
+        "is greater than or equal to": "GTE", "is MAX value": "IS_MAXVAL",
+        "is NOT MAX value": "IS_NOT_MAXVAL", "is MIN value": "IS_MINVAL",
+        "is NOT MIN value": "IS_NOT_MINVAL", "is Empty": "IS_EMPTY",
+        "is NOT Empty": "IS_NOT_EMPTY", "contains": "CONTAINS",
+        "does NOT contain": "NOT_CONTAINS", "starts with": "STARTS_WITH",
+        "ends with": "ENDS_WITH", "does NOT start with": "NOT_STARTS_WITH",
+        "does NOT end with": "NOT_ENDS_WITH", "is earlier than": "LT",
+        "is on or earlier than": "LTE", "is later than": "GT",
+        "is on or later than": "GTE",
     }
 
-    if "Operator" not in raw_condition:
-        column_name = raw_condition["Column_Name"]
-        column_op = raw_condition["Column_Operator"]
-        operand = raw_condition["Operand"]
-        operand_type = raw_condition["Operand_Type"]
+    date_format_mapping = {
+        "Date": {"field": "TRUNCATE", "value": "DAY", "format": lambda x: parser.parse(x).strftime("%Y-%m-%d") if x else None},
+        "Date-Time in seconds": {"field": "TRUNCATE", "value": "SECOND", "format": lambda x: parser.parse(x).strftime("%Y-%m-%d %H:%M:%S") if x else None},
+        "Date/Minute": {"field": "TRUNCATE", "value": "MINUTE", "format": lambda x: parser.parse(x).strftime("%Y-%m-%d %H:%M") if x else None},
+        "Date/Hour": {"field": "TRUNCATE", "value": "HOUR", "format": lambda x: parser.parse(x).strftime("%Y-%m-%d %H") if x else None},
+        "Year/Month": {"field": "TRUNCATE", "value": "MONTH", "format": lambda x: parser.parse(x).strftime("%Y-%m-01") if x else None},
+        "Year": {"field": "TRUNCATE", "value": "YEAR", "format": lambda x: parser.parse(x).strftime("%Y-01-01") if x else None},
+        "Day of Month": {"field": "COMPONENT", "value": "day", "format": lambda x: int(x) if x.isdigit() else int(parser.parse(x).strftime("%d"))},
+        "Month of Year": {"field": "COMPONENT", "value": "month_text", "format": lambda x: x if x in ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] else parser.parse(x).strftime("%B")},
+        "Earliest single value": {"field": "FUNCTION", "value": "MIN", "format": lambda x: None},
+        "Latest single value": {"field": "FUNCTION", "value": "MAX", "format": lambda x: None},
+        "Current Date (UTC)": {"field": "FUNCTION", "value": "SYSTEM_DATE", "format": lambda x: None},
+        "Weekday": {"field": "COMPONENT", "value": "weekday_text", "format": lambda x: x if x in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] else parser.parse(x).strftime("%A")},
+    }
 
+    def parse_relative_time(relative_str, base_date):
+        """Parse relative time strings like '1 year' or '3 months'."""
+        if not relative_str:
+            return None
+        try:
+            num, unit = relative_str.split()
+            num = int(num)
+            unit = unit.lower()
+            delta = relativedelta(years=num) if unit.startswith("year") else relativedelta(months=num) if unit.startswith("month") else None
+            return (base_date - delta).strftime("%Y-%m-%d %H:%M:%S") if delta else None
+        except (ValueError, AttributeError):
+            return None
+
+    def get_mapped_operator(column_op, column_type):
+        """Map operator, adjusting for Date/Time types."""
+        mapped_op = operator_map.get(column_op)
+        if column_type == "Date/Time":
+            return "EQ" if column_op == "is" else "NE" if column_op == "is NOT" else mapped_op
+        return mapped_op
+
+    def process_operand(operand, operand_type, column_op):
+        """Process operand based on type and operator."""
         if not operand:
+            return None
+        if operand_type == "Column Value" and column_op in ["is", "is one of"]:
+            return operand[0]
+        if column_op in ["is", "is NOT", "contains", "does NOT contain", "is one of"]:
+            return operand
+        return operand[0]
+
+    def transform_single_condition(cond, base_date):
+        """Transform a single condition."""
+        column_name = cond["Column_Name"]
+        column_op = cond["Column_Operator"]
+        operand = cond.get("Operand")
+        operand_type = cond["Operand_Type"]
+        date_format = cond.get("Date_Format")
+        column_type = cond.get("Column_Type")
+        unit = cond.get("Unit")
+        mapped_op = get_mapped_operator(column_op, column_type)
+        output_column_name = "column_2" if column_name == "Time" else column_name
+
+        # Handle empty operand validation
+        special_formats = ["Earliest single value", "Latest single value", "Current Date (UTC)"]
+        special_ops = ["IS_EMPTY", "IS_NOT_EMPTY", "IS_MAXVAL", "IS_NOT_MAXVAL", "IS_MINVAL", "IS_NOT_MINVAL"]
+        if not operand and date_format not in special_formats and mapped_op not in special_ops:
             raise ValueError(f"Operand cannot be empty for condition on {column_name}")
 
-        key = "COLUMN" if operand_type == "Column Value" else "VALUE"
-        value = (
-            operand[0] if operand_type == "Column Value" and column_op in ["is", "is one of"]
-            else operand if column_op in ["is", "is NOT"]
-            else operand[0]
-        )
+        # Handle Date/Time operand
+        if column_type == "Date/Time" and operand:
+            operand = operand.replace('T', ' ') if 'T' in operand else operand
 
-        return {
-            column_name: {
-                operator_map[column_op]: {
-                    key: value
-                }
-            }
-        }
+        # Handle special operators
+        if mapped_op in special_ops:
+            return {output_column_name: {mapped_op: True}}
 
-    logical_op = raw_condition["Operator"]
-    result = {logical_op: []}
-
-    for cond in raw_condition["Conditions"]:
-        if "Operator" in cond:  # Nested condition group
-            nested_result = transform_condition(cond)
-            result[logical_op].append(nested_result)
-        else:  # Single condition
-            column_name = cond["Column_Name"]
-            column_op = cond["Column_Operator"]
-            operand = cond["Operand"]
-            operand_type = cond["Operand_Type"]
-            mapped_op = operator_map.get(column_op)
-
-            # Handle IS_EMPTY and IS_NOT_EMPTY with no operand
-            if mapped_op in ["IS_EMPTY", "IS_NOT_EMPTY", "IS_MAXVAL", "IS_NOT_MAXVAL", "IS_MINVAL", "IS_NOT_MINVAL"]:
-                transformed_cond = {
-                    column_name: {
-                        mapped_op: True
+        # Handle date format mapping
+        if date_format in date_format_mapping:
+            mapping = date_format_mapping[date_format]
+            try:
+                if mapping["field"] == "FUNCTION" and not unit or mapped_op in ["IS_EMPTY", "IS_NOT_EMPTY"]:
+                    return {
+                        output_column_name: {
+                            mapped_op: {"VALUE": {mapping["field"]: mapping["value"]} if mapping["field"] == "FUNCTION" else True}
+                        }
                     }
-                }
-            else:
-                if not operand:
-                    raise ValueError(f"Operand cannot be empty for condition on {column_name}")
-                key = "COLUMN" if operand_type == "Column Value" else "VALUE"
-                value = (operand[0] if operand_type == "Column Value" and column_op in ["is", "is one of"]
-                         else operand if column_op in ["is one of", "is", "is NOT", "contains", "does NOT contain"]
-                         else operand[0])
-                transformed_cond = {
-                    column_name: {
+                value = operand[0] if operand else None
+                if date_format in special_formats and value:
+                    if unit:
+                        return {
+                            output_column_name: {
+                                mapped_op: {
+                                    "VALUE": {
+                                        "FUNCTION": mapping["value"],
+                                        "DELTA": {unit.upper(): int(value)}
+                                    }
+                                }
+                            }
+                        }
+                    value = parse_relative_time(value, base_date)
+                formatted_value = mapping["format"](value) if value else None
+                return {
+                    output_column_name: {
                         mapped_op: {
-                            key: value
+                            "VALUE": {
+                                mapping["field"]: mapping["value"],
+                                "VALUE": formatted_value
+                            }
                         }
                     }
                 }
+            except (ValueError, AttributeError) as e:
+                raise ValueError(f"Invalid date format for {value or 'None'} in {date_format} condition: {str(e)}")
 
-            result[logical_op].append(transformed_cond)
+        # Handle standard conditions
+        key = "COLUMN" if operand_type == "Column Value" else "VALUE"
+        value = process_operand(operand, operand_type, column_op)
+        return {output_column_name: {mapped_op: {key: value}}}
+
+    # Main processing
+    base_date = datetime(2025, 5, 20, 18, 45)  # May 20, 2025, 06:45 PM IST
+
+    if "Operator" not in raw_condition:
+        return transform_single_condition(raw_condition, base_date)
+
+    # Handle nested conditions
+    logical_op = raw_condition["Operator"]
+    result = {logical_op: []}
+    for cond in raw_condition["Conditions"]:
+        result[logical_op].append(transform_condition(cond))
     return result
 
 def simplify_conditions(condition):
@@ -300,14 +453,30 @@ def render_conditions(data, level=0):
             render_conditions(cond, level + 1)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
+        column_name = data.get('Column_Name', '')
+        column_type = data.get('Column_Type', '')
+        column_operator = data.get('Column_Operator', '')
+        operand_type = data.get('Operand_Type', '')
+        operand = ', '.join(map(str, data.get('Operand', [])))
+        date_format = data.get('Date_Format', '')
+        unit = data.get('Unit', '')
+
+        parts = [
+            f"<b>{column_name}</b>",
+            f"<span style='color: gray;'>({column_type})</span>",
+            f"'{column_operator}'",
+            f"<i>{operand}</i>",
+            f"<span style='color: gray;'>({operand_type})</span>"
+        ]
+        if date_format:
+            parts.append(f"<i>{date_format}</i> <span style='color: gray;'>(Value Type)</span>")
+        if unit:
+            parts.append(f"<i>{unit}</i> <span style='color: gray;'>(Unit)</span>")
+
+        line = " ".join(parts)
+
         st.markdown(
-            f"<div style='margin-left:{indent}px; padding: 5px 0;'>"
-            f"<b>{data['Column_Name']}</b> "
-            f"<span style='color: gray;'>({data['Column_Type']})</span> "
-            f"'{data['Column_Operator']}' "
-            f"<i>{', '.join(map(str, data['Operand']))}</i> "
-            f"<span style='color: gray;'>({data['Operand_Type']})</span>"
-            f"</div>",
+            f"<div style='margin-left:{indent}px; padding: 5px 0;'>{line}</div>",
             unsafe_allow_html=True
         )
 
